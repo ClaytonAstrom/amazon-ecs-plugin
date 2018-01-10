@@ -164,6 +164,7 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
     private List<EnvironmentEntry> environments;
     private List<ExtraHostEntry> extraHosts;
     private List<PortMappingEntry> portMappings;
+    private String networkMode;
 
     /**
     * The log configuration specification for the container.
@@ -198,7 +199,8 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
                            @Nullable List<EnvironmentEntry> environments,
                            @Nullable List<ExtraHostEntry> extraHosts,
                            @Nullable List<MountPointEntry> mountPoints,
-                           @Nullable List<PortMappingEntry> portMappings) {
+                           @Nullable List<PortMappingEntry> portMappings,
+    					   @Nullable String networkMode) {
         // If the template name is empty we will add a default name and a
         // random element that will help to find it later when we want to delete it.
         this.templateName = templateName.isEmpty() ?
@@ -215,6 +217,7 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
         this.extraHosts = extraHosts;
         this.mountPoints = mountPoints;
         this.portMappings = portMappings;
+        this.networkMode = networkMode;
     }
 
     @DataBoundSetter
@@ -345,6 +348,10 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
 
     public List<PortMappingEntry> getPortMappings() {
         return portMappings;
+    }
+    
+    public String getNetworkMode() {
+    	return networkMode;
     }
 
     Collection<KeyValuePair> getEnvironmentKeyValuePairs() {
@@ -545,6 +552,27 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
                 return "PortMappingEntry";
             }
         }
+    }
+    
+    public static class NetworkModeEntry extends AbstractDescribableImpl<NetworkModeEntry> {
+    	public String networkMode;
+    	
+    	@DataBoundConstructor
+    	public NetworkModeEntry(String networkMode) {
+    		this.networkMode = networkMode;
+    	}
+    	
+    	@Override
+    	public String toString() {
+    		return "NetworkModeEntry{" + "networkMode=" + networkMode + "}";
+    	}
+    	@Extension
+    	public static class DescriptorImpl extends Descriptor<NetworkModeEntry> {
+    		@Override
+            public String getDisplayName() {
+                return "NetworkModeEntry";
+            }
+    	}
     }
 
     public Set<LabelAtom> getLabelSet() {

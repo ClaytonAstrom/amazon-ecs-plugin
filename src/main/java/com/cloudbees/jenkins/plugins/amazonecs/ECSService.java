@@ -204,6 +204,7 @@ class ECSService {
         boolean templateMatchesExistingContainerDefinition = false;
         boolean templateMatchesExistingVolumes = false;
         boolean templateMatchesExistingTaskRole = false;
+        boolean templateMatchesExistingNetworkMode = false;
 
         DescribeTaskDefinitionResult describeTaskDefinition = null;
 
@@ -221,16 +222,21 @@ class ECSService {
             templateMatchesExistingTaskRole = template.getTaskrole() == null || template.getTaskrole().equals(describeTaskDefinition.getTaskDefinition().getTaskRoleArn());
             LOGGER.log(Level.INFO, "Match on task role: {0}", new Object[] {templateMatchesExistingTaskRole});
             LOGGER.log(Level.FINE, "Match on task role: {0}; template={1}; last={2}", new Object[] {templateMatchesExistingTaskRole, template.getTaskrole(), describeTaskDefinition.getTaskDefinition().getTaskRoleArn()});
+            
+            templateMatchesExistingNetworkMode = template.getNetworkMode().equalsIgnoreCase(describeTaskDefinition.getTaskDefinition().getNetworkMode());
+            LOGGER.log(Level.INFO, "Match on network mode: {0}", new Object[] {templateMatchesExistingNetworkMode});
+            LOGGER.log(Level.FINE, "Match on network mode: {0}; template={1}; last={2}", new Object[] {templateMatchesExistingNetworkMode, template.getNetworkMode(), describeTaskDefinition.getTaskDefinition().getNetworkMode()});
         }
         
-        if(templateMatchesExistingContainerDefinition && templateMatchesExistingVolumes && templateMatchesExistingTaskRole) {
+        if(templateMatchesExistingContainerDefinition && templateMatchesExistingVolumes && templateMatchesExistingTaskRole && templateMatchesExistingNetworkMode) {
             LOGGER.log(Level.FINE, "Task Definition already exists: {0}", new Object[]{describeTaskDefinition.getTaskDefinition().getTaskDefinitionArn()});
             return describeTaskDefinition.getTaskDefinition().getTaskDefinitionArn();
         } else {
             final RegisterTaskDefinitionRequest request = new RegisterTaskDefinitionRequest()                
                     .withFamily(familyName)
                     .withVolumes(template.getVolumeEntries())
-                    .withContainerDefinitions(def);
+                    .withContainerDefinitions(def)
+                    .withNetworkMode(template.getNetworkMode());
             
             if (template.getTaskrole() != null) {
                 request.withTaskRoleArn(template.getTaskrole());
