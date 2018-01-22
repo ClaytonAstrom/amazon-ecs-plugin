@@ -51,6 +51,7 @@ import com.amazonaws.regions.Region;
 import com.amazonaws.regions.RegionUtils;
 import com.amazonaws.regions.Regions;
 import com.amazonaws.services.ec2.AmazonEC2Client;
+import com.amazonaws.services.ec2.model.SecurityGroup;
 import com.amazonaws.services.ec2.model.Subnet;
 import com.amazonaws.services.ecs.AmazonECSClient;
 import com.cloudbees.jenkins.plugins.awscredentials.AWSCredentialsHelper;
@@ -91,6 +92,8 @@ public class ECSCloud extends Cloud {
     private final String cluster;
     
     private final List<SubnetEntry> subnet;
+    
+    private final List<SecurityGroupEntry> securityGroup;
 
     private String regionName;
 
@@ -108,11 +111,12 @@ public class ECSCloud extends Cloud {
 
     @DataBoundConstructor
     public ECSCloud(String name, List<ECSTaskTemplate> templates, @Nonnull String credentialsId,
-            String cluster, List<SubnetEntry> subnet, String regionName, String jenkinsUrl, int slaveTimoutInSeconds) throws InterruptedException{
+            String cluster, List<SubnetEntry> subnet, List<SecurityGroupEntry> securityGroup, String regionName, String jenkinsUrl, int slaveTimoutInSeconds) throws InterruptedException{
         super(name);
         this.credentialsId = credentialsId;
         this.cluster = cluster;
         this.subnet = subnet;
+        this.securityGroup = securityGroup;
         this.templates = templates;
         this.regionName = regionName;
         LOGGER.log(Level.INFO, "Create cloud {0} on ECS cluster {1} on the region {2}", new Object[]{name, cluster, regionName});
@@ -155,6 +159,10 @@ public class ECSCloud extends Cloud {
     
     public List<SubnetEntry> getSubnet() {
     	return subnet;
+    }
+    
+    public List<SecurityGroupEntry> getSecurityGroup() {
+    	return securityGroup;
     }
 
     public String getRegionName() {
@@ -421,6 +429,48 @@ public class ECSCloud extends Cloud {
     		@Override
     		public String getDisplayName() {
     			return "SubnetEntry";
+    		}
+    	}
+    }
+    
+    public static class SecurityGroupEntry extends AbstractDescribableImpl<SecurityGroupEntry> {
+    	public SecurityGroup securityGroup;
+    	
+    	@DataBoundConstructor
+    	public SecurityGroupEntry(SecurityGroup securityGroup) {
+    		this.securityGroup = securityGroup;
+    	}
+    	
+    	@Override
+    	public String toString() {
+    		return "SecurityGroupEntry{" + securityGroup + "}";
+    	}
+    	
+    	@Extension
+    	public static class DescriptorImpl extends Descriptor<SecurityGroupEntry> {
+    		public ListBoxModel doFillSecurityGroupItems(@RelativePath("..") @QueryParameter String credentialsId, @RelativePath("..") @QueryParameter String regionName) {
+            	ECSService ecsService = new ECSService(credentialsId, regionName);
+            	try {
+                    final AmazonEC2Client client = ecsService.getAmazonEC2Client();
+                    final ListBoxModel options = new ListBoxModel();
+                    for (SecurityGroup securityGroup : client.describeSecurityGroups().getSecurityGroups()) {
+                        options.add(securityGroup.getGroupName() + " | " + securityGroup.getGroupId());
+                    }
+                    return options;
+                } catch (AmazonClientException e) {
+                    // missing credentials will throw an "AmazonClientException: Unable to load AWS credentials from any provider in the chain"
+                    LOGGER.log(Level.INFO, "Exception searching security groups for credentials=" + credentialsId + ", regionName=" + regionName + ":" + e);
+                    LOGGER.log(Level.FINE, "Exception searching security groups for credentials=" + credentialsId + ", regionName=" + regionName, e);
+                    return new ListBoxModel();
+                } catch (RuntimeException e) {
+                    LOGGER.log(Level.INFO, "Exception searching security groups for credentials=" + credentialsId + ", regionName=" + regionName, e);
+                    return new ListBoxModel();
+                }
+    		}
+    		
+    		@Override
+    		public String getDisplayName() {
+    			return "SecurityGroupEntry";
     		}
     	}
     }
