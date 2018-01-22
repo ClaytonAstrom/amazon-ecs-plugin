@@ -50,11 +50,15 @@ import com.amazonaws.AmazonClientException;
 import com.amazonaws.regions.Region;
 import com.amazonaws.regions.RegionUtils;
 import com.amazonaws.regions.Regions;
+import com.amazonaws.services.ec2.AmazonEC2Client;
+import com.amazonaws.services.ec2.model.Subnet;
 import com.amazonaws.services.ecs.AmazonECSClient;
 import com.cloudbees.jenkins.plugins.awscredentials.AWSCredentialsHelper;
 import com.cloudbees.jenkins.plugins.awscredentials.AmazonWebServicesCredentials;
 
 import hudson.Extension;
+import hudson.RelativePath;
+import hudson.model.AbstractDescribableImpl;
 import hudson.model.Computer;
 import hudson.model.Descriptor;
 import hudson.model.Label;
@@ -85,6 +89,8 @@ public class ECSCloud extends Cloud {
     private final String credentialsId;
 
     private final String cluster;
+    
+    private final List<SubnetEntry> subnet;
 
     private String regionName;
 
@@ -102,10 +108,11 @@ public class ECSCloud extends Cloud {
 
     @DataBoundConstructor
     public ECSCloud(String name, List<ECSTaskTemplate> templates, @Nonnull String credentialsId,
-            String cluster, String regionName, String jenkinsUrl, int slaveTimoutInSeconds) throws InterruptedException{
+            String cluster, List<SubnetEntry> subnet, String regionName, String jenkinsUrl, int slaveTimoutInSeconds) throws InterruptedException{
         super(name);
         this.credentialsId = credentialsId;
         this.cluster = cluster;
+        this.subnet = subnet;
         this.templates = templates;
         this.regionName = regionName;
         LOGGER.log(Level.INFO, "Create cloud {0} on ECS cluster {1} on the region {2}", new Object[]{name, cluster, regionName});
@@ -144,6 +151,10 @@ public class ECSCloud extends Cloud {
 
     public String getCluster() {
         return cluster;
+    }
+    
+    public List<SubnetEntry> getSubnet() {
+    	return subnet;
     }
 
     public String getRegionName() {
@@ -344,6 +355,7 @@ public class ECSCloud extends Cloud {
                 LOGGER.log(Level.INFO, "Exception searching clusters for credentials=" + credentialsId + ", regionName=" + regionName, e);
                 return new ListBoxModel();
             }
+        
         }
 
         public FormValidation doCheckName(@QueryParameter String value) throws IOException, ServletException {
@@ -369,5 +381,47 @@ public class ECSCloud extends Cloud {
 
     public void setJenkinsUrl(String jenkinsUrl) {
         this.jenkinsUrl = jenkinsUrl;
+    }
+    
+    public static class SubnetEntry extends AbstractDescribableImpl<SubnetEntry> {
+    	public Subnet subnet;
+    	
+    	@DataBoundConstructor
+    	public SubnetEntry(Subnet subnet) {
+    		this.subnet = subnet;
+    	}
+    	
+    	@Override
+    	public String toString() {
+    		return "SubnetEntry{" + subnet + "}";
+    	}
+    	
+    	@Extension
+    	public static class DescriptorImpl extends Descriptor<SubnetEntry> {
+    		public ListBoxModel doFillSubnetItems(@RelativePath("..") @QueryParameter String credentialsId, @RelativePath("..") @QueryParameter String regionName) {
+            	ECSService ecsService = new ECSService(credentialsId, regionName);
+            	try {
+                    final AmazonEC2Client client = ecsService.getAmazonEC2Client();
+                    final ListBoxModel options = new ListBoxModel();
+                    for (Subnet subnet : client.describeSubnets().getSubnets()) {
+                        options.add(subnet.getSubnetId() + " | " + subnet.getCidrBlock() + " | " + subnet.getVpcId());
+                    }
+                    return options;
+                } catch (AmazonClientException e) {
+                    // missing credentials will throw an "AmazonClientException: Unable to load AWS credentials from any provider in the chain"
+                    LOGGER.log(Level.INFO, "Exception searching subnets for credentials=" + credentialsId + ", regionName=" + regionName + ":" + e);
+                    LOGGER.log(Level.FINE, "Exception searching subnets for credentials=" + credentialsId + ", regionName=" + regionName, e);
+                    return new ListBoxModel();
+                } catch (RuntimeException e) {
+                    LOGGER.log(Level.INFO, "Exception searching subnets for credentials=" + credentialsId + ", regionName=" + regionName, e);
+                    return new ListBoxModel();
+                }
+    		}
+    		
+    		@Override
+    		public String getDisplayName() {
+    			return "SubnetEntry";
+    		}
+    	}
     }
 }

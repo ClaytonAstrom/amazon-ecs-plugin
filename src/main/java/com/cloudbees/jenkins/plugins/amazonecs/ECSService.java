@@ -44,6 +44,7 @@ import com.amazonaws.ClientConfiguration;
 import com.amazonaws.regions.Region;
 import com.amazonaws.regions.RegionUtils;
 import com.amazonaws.regions.Regions;
+import com.amazonaws.services.ec2.AmazonEC2Client;
 import com.amazonaws.services.ecs.AmazonECSClient;
 import com.amazonaws.services.ecs.model.ContainerDefinition;
 import com.amazonaws.services.ecs.model.ContainerInstance;
@@ -116,6 +117,36 @@ class ECSService {
                 LOGGER.log(Level.FINE, "Connect to Amazon ECS with IAM Access Key {1}", new Object[]{obfuscatedAccessKeyId});
             }
             client = new AmazonECSClient(credentials, clientConfiguration);
+        }
+        client.setRegion(getRegion(regionName));
+        LOGGER.log(Level.FINE, "Selected Region: {0}", regionName);
+        return client;
+    }
+    
+    AmazonEC2Client getAmazonEC2Client() {
+        final AmazonEC2Client client;
+
+        ProxyConfiguration proxy = Jenkins.getInstance().proxy;
+        ClientConfiguration clientConfiguration = new ClientConfiguration();
+        if(proxy != null) {
+            clientConfiguration.setProxyHost(proxy.name);
+            clientConfiguration.setProxyPort(proxy.port);
+            clientConfiguration.setProxyUsername(proxy.getUserName());
+            clientConfiguration.setProxyPassword(proxy.getPassword());
+        }
+
+        AmazonWebServicesCredentials credentials = getCredentials(credentialsId);
+        if (credentials == null) {
+            // no credentials provided, rely on com.amazonaws.auth.DefaultAWSCredentialsProviderChain
+            // to use IAM Role define at the EC2 instance level ...
+            client = new AmazonEC2Client(clientConfiguration);
+        } else {
+            if (LOGGER.isLoggable(Level.FINE)) {
+                String awsAccessKeyId = credentials.getCredentials().getAWSAccessKeyId();
+                String obfuscatedAccessKeyId = StringUtils.left(awsAccessKeyId, 4) + StringUtils.repeat("*", awsAccessKeyId.length() - (2 * 4)) + StringUtils.right(awsAccessKeyId, 4);
+                LOGGER.log(Level.FINE, "Connect to Amazon EC2 with IAM Access Key {1}", new Object[]{obfuscatedAccessKeyId});
+            }
+            client = new AmazonEC2Client(credentials, clientConfiguration);
         }
         client.setRegion(getRegion(regionName));
         LOGGER.log(Level.FINE, "Selected Region: {0}", regionName);
@@ -204,7 +235,6 @@ class ECSService {
         boolean templateMatchesExistingContainerDefinition = false;
         boolean templateMatchesExistingVolumes = false;
         boolean templateMatchesExistingTaskRole = false;
-        boolean templateMatchesExistingNetworkMode = false;
 
         DescribeTaskDefinitionResult describeTaskDefinition = null;
 
@@ -223,20 +253,16 @@ class ECSService {
             LOGGER.log(Level.INFO, "Match on task role: {0}", new Object[] {templateMatchesExistingTaskRole});
             LOGGER.log(Level.FINE, "Match on task role: {0}; template={1}; last={2}", new Object[] {templateMatchesExistingTaskRole, template.getTaskrole(), describeTaskDefinition.getTaskDefinition().getTaskRoleArn()});
             
-            templateMatchesExistingNetworkMode = template.getNetworkMode().equalsIgnoreCase(describeTaskDefinition.getTaskDefinition().getNetworkMode());
-            LOGGER.log(Level.INFO, "Match on network mode: {0}", new Object[] {templateMatchesExistingNetworkMode});
-            LOGGER.log(Level.FINE, "Match on network mode: {0}; template={1}; last={2}", new Object[] {templateMatchesExistingNetworkMode, template.getNetworkMode(), describeTaskDefinition.getTaskDefinition().getNetworkMode()});
         }
         
-        if(templateMatchesExistingContainerDefinition && templateMatchesExistingVolumes && templateMatchesExistingTaskRole && templateMatchesExistingNetworkMode) {
+        if(templateMatchesExistingContainerDefinition && templateMatchesExistingVolumes && templateMatchesExistingTaskRole) {
             LOGGER.log(Level.FINE, "Task Definition already exists: {0}", new Object[]{describeTaskDefinition.getTaskDefinition().getTaskDefinitionArn()});
             return describeTaskDefinition.getTaskDefinition().getTaskDefinitionArn();
         } else {
             final RegisterTaskDefinitionRequest request = new RegisterTaskDefinitionRequest()                
                     .withFamily(familyName)
                     .withVolumes(template.getVolumeEntries())
-                    .withContainerDefinitions(def)
-                    .withNetworkMode(template.getNetworkMode());
+                    .withContainerDefinitions(def);
             
             if (template.getTaskrole() != null) {
                 request.withTaskRoleArn(template.getTaskrole());
