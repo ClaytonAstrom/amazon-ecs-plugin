@@ -94,6 +94,8 @@ public class ECSCloud extends Cloud {
     private final List<SubnetEntry> subnet;
     
     private final List<SecurityGroupEntry> securityGroup;
+    
+    private final String compatibility;
 
     private String regionName;
 
@@ -111,12 +113,13 @@ public class ECSCloud extends Cloud {
 
     @DataBoundConstructor
     public ECSCloud(String name, List<ECSTaskTemplate> templates, @Nonnull String credentialsId,
-            String cluster, List<SubnetEntry> subnet, List<SecurityGroupEntry> securityGroup, String regionName, String jenkinsUrl, int slaveTimoutInSeconds) throws InterruptedException{
+            String cluster, List<SubnetEntry> subnet, List<SecurityGroupEntry> securityGroup, String compatibility, String regionName, String jenkinsUrl, int slaveTimoutInSeconds) throws InterruptedException{
         super(name);
         this.credentialsId = credentialsId;
         this.cluster = cluster;
         this.subnet = subnet;
         this.securityGroup = securityGroup;
+        this.compatibility = compatibility;
         this.templates = templates;
         this.regionName = regionName;
         LOGGER.log(Level.INFO, "Create cloud {0} on ECS cluster {1} on the region {2}", new Object[]{name, cluster, regionName});
@@ -163,6 +166,10 @@ public class ECSCloud extends Cloud {
     
     public List<SecurityGroupEntry> getSecurityGroup() {
     	return securityGroup;
+    }
+    
+    public String getCompatibility() {
+    	return compatibility;
     }
 
     public String getRegionName() {
@@ -365,6 +372,13 @@ public class ECSCloud extends Cloud {
             }
         
         }
+        
+        public ListBoxModel doFillCompatibilityItems() {
+        	final ListBoxModel options = new ListBoxModel();
+        	options.add("EC2", "ec2");
+        	options.add("Fargate", "fargate");
+        	return options;
+        }
 
         public FormValidation doCheckName(@QueryParameter String value) throws IOException, ServletException {
             if (value.length() > 0 && value.length() <= 127 && value.matches(CLOUD_NAME_PATTERN)) {
@@ -474,4 +488,6 @@ public class ECSCloud extends Cloud {
     		}
     	}
     }
+    
+    
 }

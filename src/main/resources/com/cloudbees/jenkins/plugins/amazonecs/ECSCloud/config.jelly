@@ -41,6 +41,10 @@
     <f:select />
   </f:entry>
   
+  <f:entry field="compatibility" title="${%Compatibility}">
+    <f:select />
+  </f:entry>
+  
   <f:entry field="subnets" title="${%Subnets}">
       <f:repeatable field="subnet">
         <table width="100%">
