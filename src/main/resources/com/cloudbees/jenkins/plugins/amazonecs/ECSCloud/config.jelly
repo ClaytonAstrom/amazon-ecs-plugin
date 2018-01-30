@@ -41,14 +41,10 @@
     <f:select />
   </f:entry>
   
-  <f:entry field="compatibility" title="${%Compatibility}">
-    <f:select />
-  </f:entry>
-  
   <f:entry field="subnets" title="${%Subnets}">
       <f:repeatable field="subnet">
         <table width="100%">
-          <f:entry field="subnet">
+          <f:entry field="subnet" description="Ignored for EC2.">
           	<f:select />
           </f:entry>
           <f:entry>
@@ -63,7 +59,7 @@
    <f:entry field="securityGroups" title="${%Security Groups}">
       <f:repeatable field="securityGroup">
         <table width="100%">
-          <f:entry field="securityGroup">
+          <f:entry field="securityGroup" description="Ignored for EC2.">
           	<f:select />
           </f:entry>
           <f:entry>

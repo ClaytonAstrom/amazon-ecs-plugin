@@ -60,6 +60,11 @@ import java.util.*;
 public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
 
     /**
+     * Launch Type
+     */
+	private final String compatibility;
+	
+	/**
      * Template Name
      */
     @Nonnull
@@ -121,6 +126,16 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
      * @see ContainerDefinition#withCpu(Integer)
      */
     private final int cpu;
+    
+    /**
+     * Fargate CPU
+     */
+    private final String fargateCpu;
+    
+    /**
+     * Fargate Memory
+     */
+    private final String fargateMemory;
 
     /**
      * Space delimited list of Docker dns search domains
@@ -193,20 +208,24 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
     private List<LogDriverOption> logDriverOptions;
 
     @DataBoundConstructor
-    public ECSTaskTemplate(@Nonnull String templateName,
+    public ECSTaskTemplate(String compatibility,
+    					   @Nonnull String templateName,
                            @Nullable String label,
                            @Nonnull String image,
                            @Nullable String remoteFSRoot,
                            int memory,
                            int memoryReservation,
                            int cpu,
+                           String fargateCpu,
+                           String fargateMemory,
                            boolean privileged,
                            @Nullable List<LogDriverOption> logDriverOptions,
                            @Nullable List<EnvironmentEntry> environments,
                            @Nullable List<ExtraHostEntry> extraHosts,
                            @Nullable List<MountPointEntry> mountPoints,
                            @Nullable List<PortMappingEntry> portMappings) {
-        // If the template name is empty we will add a default name and a
+        this.compatibility = compatibility;
+    	// If the template name is empty we will add a default name and a
         // random element that will help to find it later when we want to delete it.
         this.templateName = templateName.isEmpty() ?
                 "jenkinsTask-" + UUID.randomUUID().toString() : templateName;
@@ -216,6 +235,8 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
         this.memory = memory;
         this.memoryReservation = memoryReservation;
         this.cpu = cpu;
+        this.fargateCpu = fargateCpu;
+        this.fargateMemory = fargateMemory;
         this.privileged = privileged;
         this.logDriverOptions = logDriverOptions;
         this.environments = environments;
@@ -253,6 +274,10 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
     public void setDnsSearchDomains(String dnsSearchDomains) {
         this.dnsSearchDomains = StringUtils.trimToNull(dnsSearchDomains);
     }
+    
+    public String getCompatibility() {
+    	return compatibility;
+    }
 
     public String getLabel() {
         return label;
@@ -276,6 +301,14 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
 
     public int getCpu() {
         return cpu;
+    }
+    
+    public String getFargateCpu() {
+    	return fargateCpu;
+    }
+    
+    public String getFargateMemory() {
+    	return fargateMemory;
     }
 
     public String getDnsSearchDomains() {
@@ -575,6 +608,66 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
     public static class DescriptorImpl extends Descriptor<ECSTaskTemplate> {
 
         private static String TEMPLATE_NAME_PATTERN = "[a-z|A-Z|0-9|_|-]{1,127}";
+        
+        public ListBoxModel doFillCompatibilityItems() {
+        	final ListBoxModel options = new ListBoxModel();
+        	options.add("EC2", "EC2");
+        	options.add("Fargate", "FARGATE");
+        	return options;
+        }
+        
+        public ListBoxModel doFillFargateCpuItems() {
+        	final ListBoxModel options = new ListBoxModel();
+        	options.add("0.25 vCPU", "256");
+        	options.add("0.5 vCPU", "512");
+        	options.add("1 vCPU", "1024");
+        	options.add("2 vCPU", "2048");
+        	options.add("4 vCPU", "4096");
+        	return options;
+        }
+        
+        String getMemoryFormat(int mem) {
+        	if (mem >= 1024) {
+        		return Integer.toString(mem / 1024) + "GB";
+        	}
+        	else {
+        		return Integer.toString(mem) + "MB";
+        	}
+        }
+        
+		public ListBoxModel doFillFargateMemoryItems(@QueryParameter String fargateCpu) {
+			final ListBoxModel options = new ListBoxModel();
+			if (!fargateCpu.isEmpty() || fargateCpu == "") {
+				switch (Integer.parseInt(fargateCpu)) {
+				case 256:
+					options.add("512MB", "512");
+					options.add("1GB", "1024");
+					options.add("2GB", "2048");
+					break;
+				case 512:
+					for (int i = 1024; i <= 3072; i = i + 1024) {
+						options.add(getMemoryFormat(i), Integer.toString(i));
+					}
+					break;
+				case 1024:
+					for (int i = 2048; i <= 8192; i = i + 1024) {
+						options.add(getMemoryFormat(i), Integer.toString(i));
+					}
+					break;
+				case 2048:
+					for (int i = 4096; i <= 16384; i = i + 1024) {
+						options.add(getMemoryFormat(i), Integer.toString(i));
+					}
+					break;
+				case 4096:
+					for (int i = 8192; i <= 30720; i = i + 1024) {
+						options.add(getMemoryFormat(i), Integer.toString(i));
+					}
+					break;
+				}
+			}
+			return options;
+		}
 
         @Override
         public String getDisplayName() {
@@ -589,26 +682,29 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
         }
 
         /* we validate both memory and memoryReservation fields to the same rules */
-        public FormValidation doCheckMemory(@QueryParameter("memory") int memory, @QueryParameter("memoryReservation") int memoryReservation) throws IOException, ServletException {
-            return validateMemorySettings(memory,memoryReservation);
+        public FormValidation doCheckMemory(@QueryParameter("memory") int memory, @QueryParameter("memoryReservation") int memoryReservation, @QueryParameter("compatibility") String compatibility) throws IOException, ServletException {
+            return validateMemorySettings(memory,memoryReservation,compatibility);
         }
 
-        public FormValidation doCheckMemoryReservation(@QueryParameter("memory") int memory, @QueryParameter("memoryReservation") int memoryReservation) throws IOException, ServletException {
-            return validateMemorySettings(memory,memoryReservation);
+        public FormValidation doCheckMemoryReservation(@QueryParameter("memory") int memory, @QueryParameter("memoryReservation") int memoryReservation, @QueryParameter("compatibility") String compatibility) throws IOException, ServletException {
+            return validateMemorySettings(memory,memoryReservation,compatibility);
         }
 
-        private FormValidation validateMemorySettings(int memory, int memoryReservation) {
-            if (memory < 0 || memoryReservation < 0) {
-                return FormValidation.error("memory and/or memoryReservation must be 0 or a positive integer");
-            }
-            if (memory == 0 && memoryReservation == 0) {
-                return FormValidation.error("at least one of memory or memoryReservation are required to be > 0");
-            }
-            if (memory > 0 && memoryReservation > 0) {
-                if (memory <= memoryReservation) {
-                    return FormValidation.error("memory must be greater than memoryReservation if both are specified");
-                }
-            }
+        private FormValidation validateMemorySettings(int memory, int memoryReservation, String compatibility) {
+            
+        	if(compatibility.equalsIgnoreCase("EC2")) {
+        		if (memory < 0 || memoryReservation < 0) {
+                	return FormValidation.error("memory and/or memoryReservation must be 0 or a positive integer");
+        		}
+        		if (memory == 0 && memoryReservation == 0) {
+                	return FormValidation.error("at least one of memory or memoryReservation are required to be > 0");
+            	}
+            	if (memory > 0 && memoryReservation > 0) {
+            		if (memory <= memoryReservation) {
+                    	return FormValidation.error("memory must be greater than memoryReservation if both are specified");
+                	}
+            	}
+        	}
             return FormValidation.ok();
         }
     }

@@ -55,7 +55,6 @@ import com.amazonaws.services.ec2.model.SecurityGroup;
 import com.amazonaws.services.ec2.model.Subnet;
 import com.amazonaws.services.ecs.AmazonECSClient;
 import com.amazonaws.services.ecs.model.AwsVpcConfiguration;
-import com.amazonaws.services.ecs.model.Compatibility;
 import com.amazonaws.services.ecs.model.NetworkConfiguration;
 import com.cloudbees.jenkins.plugins.awscredentials.AWSCredentialsHelper;
 import com.cloudbees.jenkins.plugins.awscredentials.AmazonWebServicesCredentials;
@@ -97,9 +96,6 @@ public class ECSCloud extends Cloud {
     private final List<SubnetEntry> subnet;
     
     private final List<SecurityGroupEntry> securityGroup;
-    
-    private final String compatibility;
-    
 
     private String regionName;
 
@@ -117,13 +113,12 @@ public class ECSCloud extends Cloud {
 
     @DataBoundConstructor
     public ECSCloud(String name, List<ECSTaskTemplate> templates, @Nonnull String credentialsId,
-            String cluster, List<SubnetEntry> subnet, List<SecurityGroupEntry> securityGroup, String compatibility, String regionName, String jenkinsUrl, int slaveTimoutInSeconds) throws InterruptedException{
+            String cluster, List<SubnetEntry> subnet, List<SecurityGroupEntry> securityGroup, String regionName, String jenkinsUrl, int slaveTimoutInSeconds) throws InterruptedException{
         super(name);
         this.credentialsId = credentialsId;
         this.cluster = cluster;
         this.subnet = subnet;
         this.securityGroup = securityGroup;
-        this.compatibility = compatibility;
         this.templates = templates;
         this.regionName = regionName;
         LOGGER.log(Level.INFO, "Create cloud {0} on ECS cluster {1} on the region {2}", new Object[]{name, cluster, regionName});
@@ -170,10 +165,6 @@ public class ECSCloud extends Cloud {
     
     public List<SecurityGroupEntry> getSecurityGroup() {
     	return securityGroup;
-    }
-    
-    public String getCompatibility() {
-    	return compatibility;
     }
 
     public String getRegionName() {
@@ -270,7 +261,7 @@ public class ECSCloud extends Cloud {
             Date timeout = new Date(now.getTime() + 1000 * slaveTimoutInSeconds);
 
             synchronized (cluster) {
-            	if(compatibility.equalsIgnoreCase("ec2")) {
+            	if(template.getCompatibility().equalsIgnoreCase("EC2")) {
             		getEcsService().waitForSufficientClusterResources(timeout, template, cluster);
             	} else {
             		networkConfiguration.setAwsvpcConfiguration(new AwsVpcConfiguration().withSubnets(getSubnetEntries()).withSecurityGroups(getSecurityGroupEntries()));
@@ -286,12 +277,12 @@ public class ECSCloud extends Cloud {
                 LOGGER.log(Level.INFO, "Created Slave: {0}", slave.getNodeName());
 
                 try {
-                    String taskDefintionArn = getEcsService().registerTemplate(slave.getCloud(), template, cluster, compatibility);
+                    String taskDefintionArn = getEcsService().registerTemplate(slave.getCloud(), template, cluster);
                     String taskArn;
-                    if(compatibility.equalsIgnoreCase("ec2")) {
-                    	taskArn = getEcsService().runEcsTask(slave, template, cluster, getDockerRunCommand(slave), taskDefintionArn, Compatibility.valueOf(compatibility));
+                    if(template.getCompatibility().equalsIgnoreCase("EC2")) {
+                    	taskArn = getEcsService().runEcsTask(slave, template, cluster, getDockerRunCommand(slave), taskDefintionArn);
                     } else {
-                    	taskArn = getEcsService().runEcsTask(slave, template, cluster, getDockerRunCommand(slave), taskDefintionArn, Compatibility.valueOf(compatibility), networkConfiguration);
+                    	taskArn = getEcsService().runEcsTask(slave, template, cluster, getDockerRunCommand(slave), taskDefintionArn, networkConfiguration);
                     }
                     
                     
@@ -387,13 +378,6 @@ public class ECSCloud extends Cloud {
                 return new ListBoxModel();
             }
         
-        }
-        
-        public ListBoxModel doFillCompatibilityItems() {
-        	final ListBoxModel options = new ListBoxModel();
-        	options.add("EC2", "EC2");
-        	options.add("Fargate", "FARGATE");
-        	return options;
         }
 
         public FormValidation doCheckName(@QueryParameter String value) throws IOException, ServletException {

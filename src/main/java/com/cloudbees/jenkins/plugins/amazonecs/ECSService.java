@@ -183,7 +183,7 @@ class ECSService {
      * Looks whether the latest task definition matches the desired one. If yes, returns the ARN of the existing one. 
      * If no, register a new task definition with desired parameters and return the new ARN.
      */
-    String registerTemplate(final ECSCloud cloud, final ECSTaskTemplate template, String clusterArn, String compatibility) {
+    String registerTemplate(final ECSCloud cloud, final ECSTaskTemplate template, String clusterArn) {
         final AmazonECSClient client = getAmazonECSClient();
         
         String familyName = fullQualifiedTemplateName(cloud, template);
@@ -202,11 +202,7 @@ class ECSService {
             the form validation will highlight if the settings are inappropriate
         */
         
-        String taskCPU = Double.toString(template.getCpu() * 1024).replaceAll("\\.0", "");
-
-        String taskMemory = Integer.toString(template.getMemory());
-        
-        if(compatibility.equalsIgnoreCase("EC2")) {
+        if(template.getCompatibility().equalsIgnoreCase("EC2")) {
         	if (template.getMemoryReservation() > 0) /* this is the soft limit */
         		def.withMemoryReservation(template.getMemoryReservation());
 
@@ -250,6 +246,7 @@ class ECSService {
         boolean templateMatchesExistingCompatibility = false;
         boolean taskMatchesExistingCPU = false;
         boolean taskMatchesExistingMemory = false;
+        boolean taskMatchesExistingExecutionRole = false;
 
         DescribeTaskDefinitionResult describeTaskDefinition = null;
 
@@ -268,23 +265,27 @@ class ECSService {
             LOGGER.log(Level.INFO, "Match on task role: {0}", new Object[] {templateMatchesExistingTaskRole});
             LOGGER.log(Level.FINE, "Match on task role: {0}; template={1}; last={2}", new Object[] {templateMatchesExistingTaskRole, template.getTaskrole(), describeTaskDefinition.getTaskDefinition().getTaskRoleArn()});
             
-            templateMatchesExistingCompatibility = describeTaskDefinition.getTaskDefinition().getRequiresCompatibilities().contains(compatibility.toUpperCase());
+            templateMatchesExistingCompatibility = describeTaskDefinition.getTaskDefinition().getRequiresCompatibilities().contains(template.getCompatibility().toUpperCase());
             LOGGER.log(Level.INFO, "Match on required compatibilities: {0}", new Object[] {templateMatchesExistingCompatibility});
-            LOGGER.log(Level.FINE, "Match on required compatibilities: {0}; template={1}; last={2}", new Object[] {templateMatchesExistingCompatibility, Compatibility.valueOf(compatibility), describeTaskDefinition.getTaskDefinition().getRequiresCompatibilities()});
+            LOGGER.log(Level.FINE, "Match on required compatibilities: {0}; template={1}; last={2}", new Object[] {templateMatchesExistingCompatibility, Compatibility.valueOf(template.getCompatibility()), describeTaskDefinition.getTaskDefinition().getRequiresCompatibilities()});
             
-            if(compatibility.equalsIgnoreCase("FARGATE")) {
-            	taskMatchesExistingCPU = describeTaskDefinition.getTaskDefinition().getCpu().equals(taskCPU);
+            if(template.getCompatibility().equalsIgnoreCase("FARGATE")) {
+            	taskMatchesExistingCPU = describeTaskDefinition.getTaskDefinition().getCpu().equals(template.getFargateCpu());
             	LOGGER.log(Level.INFO, "Match on task cpu: {0}", new Object[] {taskMatchesExistingCPU});
-            	LOGGER.log(Level.FINE, "Match on task cpu: {0}; template={1}; last={2}", new Object[] {taskMatchesExistingCPU, taskCPU, describeTaskDefinition.getTaskDefinition().getCpu()});
+            	LOGGER.log(Level.FINE, "Match on task cpu: {0}; template={1}; last={2}", new Object[] {taskMatchesExistingCPU, template.getFargateCpu(), describeTaskDefinition.getTaskDefinition().getCpu()});
             	
-            	taskMatchesExistingMemory = describeTaskDefinition.getTaskDefinition().getMemory().equals(taskMemory);
+            	taskMatchesExistingMemory = describeTaskDefinition.getTaskDefinition().getMemory().equals(template.getFargateMemory());
             	LOGGER.log(Level.INFO, "Match on task memory: {0}", new Object[] {taskMatchesExistingMemory});
-            	LOGGER.log(Level.FINE, "Match on task memory: {0}; template={1}; last={2}", new Object[] {taskMatchesExistingMemory, taskMemory, describeTaskDefinition.getTaskDefinition().getMemory()});
+            	LOGGER.log(Level.FINE, "Match on task memory: {0}; template={1}; last={2}", new Object[] {taskMatchesExistingMemory, template.getFargateMemory(), describeTaskDefinition.getTaskDefinition().getMemory()});
+            	
+            	taskMatchesExistingExecutionRole = describeTaskDefinition.getTaskDefinition().getExecutionRoleArn().equals(template.getExecutionRole());
+            	LOGGER.log(Level.INFO, "Match on task execution role: {0}", new Object[] {taskMatchesExistingExecutionRole});
+            	LOGGER.log(Level.FINE, "Match on task execution role: {0}; template={1}; last={2}", new Object[] {taskMatchesExistingExecutionRole, template.getExecutionRole(), describeTaskDefinition.getTaskDefinition().getExecutionRoleArn()});
             }
             
         }
         
-        if(templateMatchesExistingContainerDefinition && templateMatchesExistingVolumes && templateMatchesExistingTaskRole && templateMatchesExistingCompatibility && (compatibility.equalsIgnoreCase("FARGATE") == taskMatchesExistingCPU == taskMatchesExistingMemory)) {
+        if(templateMatchesExistingContainerDefinition && templateMatchesExistingVolumes && templateMatchesExistingTaskRole && templateMatchesExistingCompatibility && (template.getCompatibility().equalsIgnoreCase("FARGATE") == taskMatchesExistingCPU == taskMatchesExistingMemory == taskMatchesExistingExecutionRole)) {
             LOGGER.log(Level.FINE, "Task Definition already exists: {0}", new Object[]{describeTaskDefinition.getTaskDefinition().getTaskDefinitionArn()});
             return describeTaskDefinition.getTaskDefinition().getTaskDefinitionArn();
         } else {
@@ -292,12 +293,12 @@ class ECSService {
                     .withFamily(familyName)
                     .withVolumes(template.getVolumeEntries())
                     .withContainerDefinitions(def)
-                    .withRequiresCompatibilities(Compatibility.valueOf(compatibility));
+                    .withRequiresCompatibilities(Compatibility.valueOf(template.getCompatibility()));
             
-            if(compatibility.equalsIgnoreCase("FARGATE")) {
+            if(template.getCompatibility().equalsIgnoreCase("FARGATE")) {
             	request.withNetworkMode("awsvpc")
-            		.withCpu(taskCPU)
-            		.withMemory(taskMemory);
+            		.withCpu(template.getFargateCpu())
+            		.withMemory(template.getFargateMemory());
             }
             
             if (template.getTaskrole() != null) {
@@ -320,7 +321,7 @@ class ECSService {
         return cloud.getDisplayName().replaceAll("\\s+","") + '-' + template.getTemplateName();
     }
 
-    String runEcsTask(final ECSSlave slave, final ECSTaskTemplate template, String clusterArn, Collection<String> command, String taskDefinitionArn, Compatibility compatibility) throws IOException, AbortException {
+    String runEcsTask(final ECSSlave slave, final ECSTaskTemplate template, String clusterArn, Collection<String> command, String taskDefinitionArn) throws IOException, AbortException {
         AmazonECSClient client = getAmazonECSClient();
         slave.setTaskDefinitonArn(taskDefinitionArn);
 
@@ -353,7 +354,7 @@ class ECSService {
         return runTaskResult.getTasks().get(0).getTaskArn();
     }
     
-    String runEcsTask(final ECSSlave slave, final ECSTaskTemplate template, String clusterArn, Collection<String> command, String taskDefinitionArn, Compatibility compatibility, NetworkConfiguration networkConfiguration) throws IOException, AbortException {
+    String runEcsTask(final ECSSlave slave, final ECSTaskTemplate template, String clusterArn, Collection<String> command, String taskDefinitionArn, NetworkConfiguration networkConfiguration) throws IOException, AbortException {
         AmazonECSClient client = getAmazonECSClient();
         slave.setTaskDefinitonArn(taskDefinitionArn);
 
@@ -375,7 +376,7 @@ class ECSService {
                     .withEnvironment(envNodeSecret)))
                 .withCluster(clusterArn);
         
-        if (compatibility.toString().equalsIgnoreCase("FARGATE")) {
+        if (template.getCompatibility().toString().equalsIgnoreCase("FARGATE")) {
         	runTaskRequest.withNetworkConfiguration(networkConfiguration);
         	runTaskRequest.withLaunchType("FARGATE");
         }
