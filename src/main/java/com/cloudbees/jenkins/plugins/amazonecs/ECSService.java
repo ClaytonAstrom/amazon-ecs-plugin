@@ -46,6 +46,7 @@ import com.amazonaws.regions.RegionUtils;
 import com.amazonaws.regions.Regions;
 import com.amazonaws.services.ec2.AmazonEC2Client;
 import com.amazonaws.services.ecs.AmazonECSClient;
+import com.amazonaws.services.ecs.model.Compatibility;
 import com.amazonaws.services.ecs.model.ContainerDefinition;
 import com.amazonaws.services.ecs.model.ContainerInstance;
 import com.amazonaws.services.ecs.model.ContainerOverride;
@@ -60,6 +61,7 @@ import com.amazonaws.services.ecs.model.ListContainerInstancesResult;
 import com.amazonaws.services.ecs.model.ListTaskDefinitionsRequest;
 import com.amazonaws.services.ecs.model.ListTaskDefinitionsResult;
 import com.amazonaws.services.ecs.model.LogConfiguration;
+import com.amazonaws.services.ecs.model.NetworkConfiguration;
 import com.amazonaws.services.ecs.model.RegisterTaskDefinitionRequest;
 import com.amazonaws.services.ecs.model.RegisterTaskDefinitionResult;
 import com.amazonaws.services.ecs.model.Resource;
@@ -181,7 +183,7 @@ class ECSService {
      * Looks whether the latest task definition matches the desired one. If yes, returns the ARN of the existing one. 
      * If no, register a new task definition with desired parameters and return the new ARN.
      */
-    String registerTemplate(final ECSCloud cloud, final ECSTaskTemplate template, String clusterArn) {
+    String registerTemplate(final ECSCloud cloud, final ECSTaskTemplate template, String clusterArn, String compatibility) {
         final AmazonECSClient client = getAmazonECSClient();
         
         String familyName = fullQualifiedTemplateName(cloud, template);
@@ -192,20 +194,29 @@ class ECSService {
                 .withExtraHosts(template.getExtraHostEntries())
                 .withMountPoints(template.getMountPointEntries())
                 .withPortMappings(template.getPortMappingEntries())
-                .withCpu(template.getCpu())
-                .withPrivileged(template.getPrivileged())
                 .withEssential(true);
 
         /*
             at least one of memory or memoryReservation has to be set
             the form validation will highlight if the settings are inappropriate
         */
-        if (template.getMemoryReservation() > 0) /* this is the soft limit */
-            def.withMemoryReservation(template.getMemoryReservation());
+        
+        String taskCPU = Double.toString(template.getCpu() * 1024).replaceAll("\\.0", "");
 
-        if (template.getMemory() > 0) /* this is the hard limit */
-            def.withMemory(template.getMemory());
+        String taskMemory = Integer.toString(template.getMemory());
+        
+        if(compatibility.equalsIgnoreCase("EC2")) {
+        	if (template.getMemoryReservation() > 0) /* this is the soft limit */
+        		def.withMemoryReservation(template.getMemoryReservation());
 
+        	if (template.getMemory() > 0) /* this is the hard limit */
+        		def.withMemory(template.getMemory());
+        	
+        	def
+        		.withCpu(template.getCpu())
+        		.withPrivileged(template.getPrivileged());
+        
+        }
         if (template.getEntrypoint() != null)
             def.withEntryPoint(StringUtils.split(template.getEntrypoint()));
 
@@ -235,6 +246,9 @@ class ECSService {
         boolean templateMatchesExistingContainerDefinition = false;
         boolean templateMatchesExistingVolumes = false;
         boolean templateMatchesExistingTaskRole = false;
+        boolean templateMatchesExistingCompatibility = false;
+        boolean taskMatchesExistingCPU = false;
+        boolean taskMatchesExistingMemory = false;
 
         DescribeTaskDefinitionResult describeTaskDefinition = null;
 
@@ -253,20 +267,46 @@ class ECSService {
             LOGGER.log(Level.INFO, "Match on task role: {0}", new Object[] {templateMatchesExistingTaskRole});
             LOGGER.log(Level.FINE, "Match on task role: {0}; template={1}; last={2}", new Object[] {templateMatchesExistingTaskRole, template.getTaskrole(), describeTaskDefinition.getTaskDefinition().getTaskRoleArn()});
             
+            templateMatchesExistingCompatibility = describeTaskDefinition.getTaskDefinition().getRequiresCompatibilities().contains(compatibility.toUpperCase());
+            LOGGER.log(Level.INFO, "Match on required compatibilities: {0}", new Object[] {templateMatchesExistingCompatibility});
+            LOGGER.log(Level.FINE, "Match on required compatibilities: {0}; template={1}; last={2}", new Object[] {templateMatchesExistingCompatibility, Compatibility.valueOf(compatibility), describeTaskDefinition.getTaskDefinition().getRequiresCompatibilities()});
+            
+            if(compatibility.equalsIgnoreCase("FARGATE")) {
+            	taskMatchesExistingCPU = describeTaskDefinition.getTaskDefinition().getCpu().equals(taskCPU);
+            	LOGGER.log(Level.INFO, "Match on task cpu: {0}", new Object[] {taskMatchesExistingCPU});
+            	LOGGER.log(Level.FINE, "Match on task cpu: {0}; template={1}; last={2}", new Object[] {taskMatchesExistingCPU, taskCPU, describeTaskDefinition.getTaskDefinition().getCpu()});
+            	
+            	taskMatchesExistingMemory = describeTaskDefinition.getTaskDefinition().getMemory().equals(taskMemory);
+            	LOGGER.log(Level.INFO, "Match on task memory: {0}", new Object[] {taskMatchesExistingMemory});
+            	LOGGER.log(Level.FINE, "Match on task memory: {0}; template={1}; last={2}", new Object[] {taskMatchesExistingMemory, taskMemory, describeTaskDefinition.getTaskDefinition().getMemory()});
+            }
+            
         }
         
-        if(templateMatchesExistingContainerDefinition && templateMatchesExistingVolumes && templateMatchesExistingTaskRole) {
+        if(templateMatchesExistingContainerDefinition && templateMatchesExistingVolumes && templateMatchesExistingTaskRole && templateMatchesExistingCompatibility && (compatibility.equalsIgnoreCase("FARGATE") == taskMatchesExistingCPU == taskMatchesExistingMemory)) {
             LOGGER.log(Level.FINE, "Task Definition already exists: {0}", new Object[]{describeTaskDefinition.getTaskDefinition().getTaskDefinitionArn()});
             return describeTaskDefinition.getTaskDefinition().getTaskDefinitionArn();
         } else {
             final RegisterTaskDefinitionRequest request = new RegisterTaskDefinitionRequest()                
                     .withFamily(familyName)
                     .withVolumes(template.getVolumeEntries())
-                    .withContainerDefinitions(def);
+                    .withContainerDefinitions(def)
+                    .withRequiresCompatibilities(Compatibility.valueOf(compatibility));
+            
+            if(compatibility.equalsIgnoreCase("FARGATE")) {
+            	request.withNetworkMode("awsvpc")
+            		.withCpu(taskCPU)
+            		.withMemory(taskMemory);
+            }
             
             if (template.getTaskrole() != null) {
                 request.withTaskRoleArn(template.getTaskrole());
-            }            
+            }
+            
+            if (template.getExecutionRole() != null) {
+            	request.withExecutionRoleArn(template.getExecutionRole());
+            }
+            
             final RegisterTaskDefinitionResult result = client.registerTaskDefinition(request);
             String taskDefinitionArn = result.getTaskDefinition().getTaskDefinitionArn();
             LOGGER.log(Level.FINE, "Created Task Definition {0}: {1}", new Object[]{taskDefinitionArn, request});
@@ -279,7 +319,7 @@ class ECSService {
         return cloud.getDisplayName().replaceAll("\\s+","") + '-' + template.getTemplateName();
     }
 
-    String runEcsTask(final ECSSlave slave, final ECSTaskTemplate template, String clusterArn, Collection<String> command, String taskDefinitionArn) throws IOException, AbortException {
+    String runEcsTask(final ECSSlave slave, final ECSTaskTemplate template, String clusterArn, Collection<String> command, String taskDefinitionArn, Compatibility compatibility) throws IOException, AbortException {
         AmazonECSClient client = getAmazonECSClient();
         slave.setTaskDefinitonArn(taskDefinitionArn);
 
@@ -301,6 +341,45 @@ class ECSService {
               .withEnvironment(envNodeSecret)))
           .withCluster(clusterArn)
         );
+
+        if (!runTaskResult.getFailures().isEmpty()) {
+            LOGGER.log(Level.WARNING, "Slave {0} - Failure to run task with definition {1} on ECS cluster {2}", new Object[]{slave.getNodeName(), taskDefinitionArn, clusterArn});
+            for (Failure failure : runTaskResult.getFailures()) {
+                LOGGER.log(Level.WARNING, "Slave {0} - Failure reason={1}, arn={2}", new Object[]{slave.getNodeName(), failure.getReason(), failure.getArn()});
+            }
+            throw new AbortException("Failed to run slave container " + slave.getNodeName());
+        }
+        return runTaskResult.getTasks().get(0).getTaskArn();
+    }
+    
+    String runEcsTask(final ECSSlave slave, final ECSTaskTemplate template, String clusterArn, Collection<String> command, String taskDefinitionArn, Compatibility compatibility, NetworkConfiguration networkConfiguration) throws IOException, AbortException {
+        AmazonECSClient client = getAmazonECSClient();
+        slave.setTaskDefinitonArn(taskDefinitionArn);
+
+        KeyValuePair envNodeName = new KeyValuePair();
+        envNodeName.setName("SLAVE_NODE_NAME");
+        envNodeName.setValue(slave.getComputer().getName());
+
+        KeyValuePair envNodeSecret = new KeyValuePair();
+        envNodeSecret.setName("SLAVE_NODE_SECRET");
+        envNodeSecret.setValue(slave.getComputer().getJnlpMac());
+        
+        final RunTaskRequest runTaskRequest = new RunTaskRequest()
+        		.withTaskDefinition(taskDefinitionArn)
+                .withOverrides(new TaskOverride()
+                  .withContainerOverrides(new ContainerOverride()
+                    .withName(fullQualifiedTemplateName(slave.getCloud(), template))
+                    .withCommand(command)
+                    .withEnvironment(envNodeName)
+                    .withEnvironment(envNodeSecret)))
+                .withCluster(clusterArn);
+        
+        if (compatibility.toString().equalsIgnoreCase("FARGATE")) {
+        	runTaskRequest.withNetworkConfiguration(networkConfiguration);
+        	runTaskRequest.withLaunchType("FARGATE");
+        }
+        
+        final RunTaskResult runTaskResult = client.runTask(runTaskRequest);
 
         if (!runTaskResult.getFailures().isEmpty()) {
             LOGGER.log(Level.WARNING, "Slave {0} - Failure to run task with definition {1} on ECS cluster {2}", new Object[]{slave.getNodeName(), taskDefinitionArn, clusterArn});

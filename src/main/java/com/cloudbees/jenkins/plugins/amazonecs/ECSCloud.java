@@ -54,6 +54,9 @@ import com.amazonaws.services.ec2.AmazonEC2Client;
 import com.amazonaws.services.ec2.model.SecurityGroup;
 import com.amazonaws.services.ec2.model.Subnet;
 import com.amazonaws.services.ecs.AmazonECSClient;
+import com.amazonaws.services.ecs.model.AwsVpcConfiguration;
+import com.amazonaws.services.ecs.model.Compatibility;
+import com.amazonaws.services.ecs.model.NetworkConfiguration;
 import com.cloudbees.jenkins.plugins.awscredentials.AWSCredentialsHelper;
 import com.cloudbees.jenkins.plugins.awscredentials.AmazonWebServicesCredentials;
 
@@ -96,6 +99,7 @@ public class ECSCloud extends Cloud {
     private final List<SecurityGroupEntry> securityGroup;
     
     private final String compatibility;
+    
 
     private String regionName;
 
@@ -259,13 +263,18 @@ public class ECSCloud extends Cloud {
 
         public Node call() throws Exception {
             final ECSSlave slave;
+            
+            final NetworkConfiguration networkConfiguration = new NetworkConfiguration();
 
             Date now = new Date();
             Date timeout = new Date(now.getTime() + 1000 * slaveTimoutInSeconds);
 
             synchronized (cluster) {
-                getEcsService().waitForSufficientClusterResources(timeout, template, cluster);
-
+            	if(compatibility.equalsIgnoreCase("ec2")) {
+            		getEcsService().waitForSufficientClusterResources(timeout, template, cluster);
+            	} else {
+            		networkConfiguration.setAwsvpcConfiguration(new AwsVpcConfiguration().withSubnets(getSubnetEntries()).withSecurityGroups(getSecurityGroupEntries()));
+            	}
                 String uniq = Long.toHexString(System.nanoTime());
                 slave = new ECSSlave(ECSCloud.this, name + "-" + uniq, template.getRemoteFSRoot(),
                         label == null ? null : label.toString(), new JNLPLauncher());
@@ -277,8 +286,15 @@ public class ECSCloud extends Cloud {
                 LOGGER.log(Level.INFO, "Created Slave: {0}", slave.getNodeName());
 
                 try {
-                    String taskDefintionArn = getEcsService().registerTemplate(slave.getCloud(), template, cluster);
-                    String taskArn = getEcsService().runEcsTask(slave, template, cluster, getDockerRunCommand(slave), taskDefintionArn);
+                    String taskDefintionArn = getEcsService().registerTemplate(slave.getCloud(), template, cluster, compatibility);
+                    String taskArn;
+                    if(compatibility.equalsIgnoreCase("ec2")) {
+                    	taskArn = getEcsService().runEcsTask(slave, template, cluster, getDockerRunCommand(slave), taskDefintionArn, Compatibility.valueOf(compatibility));
+                    } else {
+                    	taskArn = getEcsService().runEcsTask(slave, template, cluster, getDockerRunCommand(slave), taskDefintionArn, Compatibility.valueOf(compatibility), networkConfiguration);
+                    }
+                    
+                    
                     LOGGER.log(Level.INFO, "Slave {0} - Slave Task Started : {1}",
                             new Object[] { slave.getNodeName(), taskArn });
                     slave.setTaskArn(taskArn);
@@ -375,8 +391,8 @@ public class ECSCloud extends Cloud {
         
         public ListBoxModel doFillCompatibilityItems() {
         	final ListBoxModel options = new ListBoxModel();
-        	options.add("EC2", "ec2");
-        	options.add("Fargate", "fargate");
+        	options.add("EC2", "EC2");
+        	options.add("Fargate", "FARGATE");
         	return options;
         }
 
@@ -405,11 +421,37 @@ public class ECSCloud extends Cloud {
         this.jenkinsUrl = jenkinsUrl;
     }
     
+    Collection<String> getSubnetEntries() {
+    	if (null == subnet || subnet.isEmpty()) {
+    		return null;
+    	}
+    	
+    	Collection<String> subs = new ArrayList<String>();
+    	for (SubnetEntry subnet : this.subnet) {
+    		subs.add(subnet.subnet);
+    	}
+    	
+    	return subs;
+    }
+    
+    Collection<String> getSecurityGroupEntries() {
+    	if (null == securityGroup || securityGroup.isEmpty()) {
+    		return null;
+    	}
+    	
+    	Collection<String> secGroups = new ArrayList<String>();
+    	for (SecurityGroupEntry securityGroup : this.securityGroup) {
+    		secGroups.add(securityGroup.securityGroup);
+    	}
+    	
+    	return secGroups;
+    }
+    
     public static class SubnetEntry extends AbstractDescribableImpl<SubnetEntry> {
-    	public Subnet subnet;
+    	public String subnet;
     	
     	@DataBoundConstructor
-    	public SubnetEntry(Subnet subnet) {
+    	public SubnetEntry(String subnet) {
     		this.subnet = subnet;
     	}
     	
@@ -426,7 +468,7 @@ public class ECSCloud extends Cloud {
                     final AmazonEC2Client client = ecsService.getAmazonEC2Client();
                     final ListBoxModel options = new ListBoxModel();
                     for (Subnet subnet : client.describeSubnets().getSubnets()) {
-                        options.add(subnet.getSubnetId() + " | " + subnet.getCidrBlock() + " | " + subnet.getVpcId());
+                        options.add(subnet.getSubnetId() + " | " + subnet.getCidrBlock() + " | " + subnet.getVpcId(), subnet.getSubnetId());
                     }
                     return options;
                 } catch (AmazonClientException e) {
@@ -448,10 +490,10 @@ public class ECSCloud extends Cloud {
     }
     
     public static class SecurityGroupEntry extends AbstractDescribableImpl<SecurityGroupEntry> {
-    	public SecurityGroup securityGroup;
+    	public String securityGroup;
     	
     	@DataBoundConstructor
-    	public SecurityGroupEntry(SecurityGroup securityGroup) {
+    	public SecurityGroupEntry(String securityGroup) {
     		this.securityGroup = securityGroup;
     	}
     	
@@ -468,7 +510,7 @@ public class ECSCloud extends Cloud {
                     final AmazonEC2Client client = ecsService.getAmazonEC2Client();
                     final ListBoxModel options = new ListBoxModel();
                     for (SecurityGroup securityGroup : client.describeSecurityGroups().getSecurityGroups()) {
-                        options.add(securityGroup.getGroupName() + " | " + securityGroup.getGroupId());
+                        options.add(securityGroup.getGroupName() + " | " + securityGroup.getGroupId(), securityGroup.getGroupId());
                     }
                     return options;
                 } catch (AmazonClientException e) {

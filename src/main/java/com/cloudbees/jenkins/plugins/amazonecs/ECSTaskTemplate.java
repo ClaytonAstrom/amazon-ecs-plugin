@@ -145,9 +145,16 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
      */
     @CheckForNull
     private String taskrole;
+    
     /**
-      JVM arguments to start slave.jar
+     * TODO:  PUT USEFUL INFO HERE
      */
+    @CheckForNull
+    private String executionRole;
+    
+    /**
+    JVM arguments to start slave.jar
+   */
     @CheckForNull
     private String jvmArgs;
 
@@ -221,6 +228,11 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
     public void setTaskrole(String taskRoleArn) {
         this.taskrole = StringUtils.trimToNull(taskRoleArn);
     }
+    
+    @DataBoundSetter
+    public void setExecutionRole(String executionRoleArn) {
+    	this.executionRole = StringUtils.trimToNull(executionRoleArn);
+    }
 
     @DataBoundSetter
     public void setEntrypoint(String entrypoint) {
@@ -276,6 +288,10 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
 
     public String getTaskrole() {
         return taskrole;
+    }
+    
+    public String getExecutionRole() {
+    	return executionRole;
     }
 
     public String getJvmArgs() {
