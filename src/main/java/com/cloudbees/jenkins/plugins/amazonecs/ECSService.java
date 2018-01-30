@@ -194,7 +194,8 @@ class ECSService {
                 .withExtraHosts(template.getExtraHostEntries())
                 .withMountPoints(template.getMountPointEntries())
                 .withPortMappings(template.getPortMappingEntries())
-                .withEssential(true);
+                .withEssential(true)
+                .withCpu(0);
 
         /*
             at least one of memory or memoryReservation has to be set
