@@ -247,6 +247,12 @@ class ECSService {
         boolean taskMatchesExistingCPU = false;
         boolean taskMatchesExistingMemory = false;
         boolean taskMatchesExistingExecutionRole = false;
+        
+        if(template.getCompatibility().equalsIgnoreCase("EC2")) {
+        	taskMatchesExistingCPU = true;
+        	taskMatchesExistingMemory = true;
+        	taskMatchesExistingExecutionRole = true;
+        }
 
         DescribeTaskDefinitionResult describeTaskDefinition = null;
 
@@ -285,7 +291,7 @@ class ECSService {
             
         }
         
-        if(templateMatchesExistingContainerDefinition && templateMatchesExistingVolumes && templateMatchesExistingTaskRole && templateMatchesExistingCompatibility && (template.getCompatibility().equalsIgnoreCase("FARGATE") == taskMatchesExistingCPU == taskMatchesExistingMemory == taskMatchesExistingExecutionRole)) {
+        if(templateMatchesExistingContainerDefinition && templateMatchesExistingVolumes && templateMatchesExistingTaskRole && templateMatchesExistingCompatibility && taskMatchesExistingCPU && taskMatchesExistingMemory && taskMatchesExistingExecutionRole) {
             LOGGER.log(Level.FINE, "Task Definition already exists: {0}", new Object[]{describeTaskDefinition.getTaskDefinition().getTaskDefinitionArn()});
             return describeTaskDefinition.getTaskDefinition().getTaskDefinitionArn();
         } else {
