@@ -40,7 +40,37 @@
   <f:entry field="cluster" title="${%ECS Cluster}">
     <f:select />
   </f:entry>
-
+  
+  <f:entry field="subnets" title="${%Subnets}">
+      <f:repeatable field="subnet">
+        <table width="100%">
+          <f:entry field="subnet" description="Ignored for EC2.">
+          	<f:select />
+          </f:entry>
+          <f:entry>
+            <div align="right">
+              <f:repeatableDeleteButton />
+            </div>
+          </f:entry>
+        </table>
+     </f:repeatable>
+   </f:entry>
+   
+   <f:entry field="securityGroups" title="${%Security Groups}">
+      <f:repeatable field="securityGroup">
+        <table width="100%">
+          <f:entry field="securityGroup" description="Ignored for EC2.">
+          	<f:select />
+          </f:entry>
+          <f:entry>
+            <div align="right">
+              <f:repeatableDeleteButton />
+            </div>
+          </f:entry>
+        </table>
+     </f:repeatable>
+   </f:entry>
+    
   <f:advanced>
     <f:entry field="tunnel" title="${%Tunnel connection through}" help="/help/system-config/master-slave/jnlp-tunnel.html">
       <f:textbox />

@@ -50,11 +50,18 @@ import com.amazonaws.AmazonClientException;
 import com.amazonaws.regions.Region;
 import com.amazonaws.regions.RegionUtils;
 import com.amazonaws.regions.Regions;
+import com.amazonaws.services.ec2.AmazonEC2Client;
+import com.amazonaws.services.ec2.model.SecurityGroup;
+import com.amazonaws.services.ec2.model.Subnet;
 import com.amazonaws.services.ecs.AmazonECSClient;
+import com.amazonaws.services.ecs.model.AwsVpcConfiguration;
+import com.amazonaws.services.ecs.model.NetworkConfiguration;
 import com.cloudbees.jenkins.plugins.awscredentials.AWSCredentialsHelper;
 import com.cloudbees.jenkins.plugins.awscredentials.AmazonWebServicesCredentials;
 
 import hudson.Extension;
+import hudson.RelativePath;
+import hudson.model.AbstractDescribableImpl;
 import hudson.model.Computer;
 import hudson.model.Descriptor;
 import hudson.model.Label;
@@ -85,6 +92,10 @@ public class ECSCloud extends Cloud {
     private final String credentialsId;
 
     private final String cluster;
+    
+    private final List<SubnetEntry> subnet;
+    
+    private final List<SecurityGroupEntry> securityGroup;
 
     private String regionName;
 
@@ -102,10 +113,12 @@ public class ECSCloud extends Cloud {
 
     @DataBoundConstructor
     public ECSCloud(String name, List<ECSTaskTemplate> templates, @Nonnull String credentialsId,
-            String cluster, String regionName, String jenkinsUrl, int slaveTimoutInSeconds) throws InterruptedException{
+            String cluster, List<SubnetEntry> subnet, List<SecurityGroupEntry> securityGroup, String regionName, String jenkinsUrl, int slaveTimoutInSeconds) throws InterruptedException{
         super(name);
         this.credentialsId = credentialsId;
         this.cluster = cluster;
+        this.subnet = subnet;
+        this.securityGroup = securityGroup;
         this.templates = templates;
         this.regionName = regionName;
         LOGGER.log(Level.INFO, "Create cloud {0} on ECS cluster {1} on the region {2}", new Object[]{name, cluster, regionName});
@@ -144,6 +157,14 @@ public class ECSCloud extends Cloud {
 
     public String getCluster() {
         return cluster;
+    }
+    
+    public List<SubnetEntry> getSubnet() {
+    	return subnet;
+    }
+    
+    public List<SecurityGroupEntry> getSecurityGroup() {
+    	return securityGroup;
     }
 
     public String getRegionName() {
@@ -189,11 +210,13 @@ public class ECSCloud extends Cloud {
     @Override
     public Collection<NodeProvisioner.PlannedNode> provision(Label label, int excessWorkload) {
         try {
+			LOGGER.log(Level.INFO, "Asked to provision {0} slave(s) for: {1}", new Object[]{excessWorkload, label});
 
             List<NodeProvisioner.PlannedNode> r = new ArrayList<NodeProvisioner.PlannedNode>();
             final ECSTaskTemplate template = getTemplate(label);
 
             for (int i = 1; i <= excessWorkload; i++) {
+				LOGGER.log(Level.INFO, "Will provision {0}, for label: {1}", new Object[]{template.getDisplayName(), label} );
 
                 r.add(new NodeProvisioner.PlannedNode(template.getDisplayName(), Computer.threadPoolForRemoting
                   .submit(new ProvisioningCallback(template, label)), 1));
@@ -231,13 +254,18 @@ public class ECSCloud extends Cloud {
 
         public Node call() throws Exception {
             final ECSSlave slave;
+            
+            final NetworkConfiguration networkConfiguration = new NetworkConfiguration();
 
             Date now = new Date();
             Date timeout = new Date(now.getTime() + 1000 * slaveTimoutInSeconds);
 
             synchronized (cluster) {
-                getEcsService().waitForSufficientClusterResources(timeout, template, cluster);
-
+            	if(template.getCompatibility().equalsIgnoreCase("EC2")) {
+            		getEcsService().waitForSufficientClusterResources(timeout, template, cluster);
+            	} else {
+            		networkConfiguration.setAwsvpcConfiguration(new AwsVpcConfiguration().withSubnets(getSubnetEntries()).withSecurityGroups(getSecurityGroupEntries()));
+            	}
                 String uniq = Long.toHexString(System.nanoTime());
                 slave = new ECSSlave(ECSCloud.this, name + "-" + uniq, template.getRemoteFSRoot(),
                         label == null ? null : label.toString(), new JNLPLauncher());
@@ -250,7 +278,14 @@ public class ECSCloud extends Cloud {
 
                 try {
                     String taskDefintionArn = getEcsService().registerTemplate(slave.getCloud(), template, cluster);
-                    String taskArn = getEcsService().runEcsTask(slave, template, cluster, getDockerRunCommand(slave), taskDefintionArn);
+                    String taskArn;
+                    if(template.getCompatibility().equalsIgnoreCase("EC2")) {
+                    	taskArn = getEcsService().runEcsTask(slave, template, cluster, getDockerRunCommand(slave), taskDefintionArn);
+                    } else {
+                    	taskArn = getEcsService().runEcsTask(slave, template, cluster, getDockerRunCommand(slave), taskDefintionArn, networkConfiguration);
+                    }
+                    
+                    
                     LOGGER.log(Level.INFO, "Slave {0} - Slave Task Started : {1}",
                             new Object[] { slave.getNodeName(), taskArn });
                     slave.setTaskArn(taskArn);
@@ -342,6 +377,7 @@ public class ECSCloud extends Cloud {
                 LOGGER.log(Level.INFO, "Exception searching clusters for credentials=" + credentialsId + ", regionName=" + regionName, e);
                 return new ListBoxModel();
             }
+        
         }
 
         public FormValidation doCheckName(@QueryParameter String value) throws IOException, ServletException {
@@ -368,4 +404,116 @@ public class ECSCloud extends Cloud {
     public void setJenkinsUrl(String jenkinsUrl) {
         this.jenkinsUrl = jenkinsUrl;
     }
+    
+    Collection<String> getSubnetEntries() {
+    	if (null == subnet || subnet.isEmpty()) {
+    		return null;
+    	}
+    	
+    	Collection<String> subs = new ArrayList<String>();
+    	for (SubnetEntry subnet : this.subnet) {
+    		subs.add(subnet.subnet);
+    	}
+    	
+    	return subs;
+    }
+    
+    Collection<String> getSecurityGroupEntries() {
+    	if (null == securityGroup || securityGroup.isEmpty()) {
+    		return null;
+    	}
+    	
+    	Collection<String> secGroups = new ArrayList<String>();
+    	for (SecurityGroupEntry securityGroup : this.securityGroup) {
+    		secGroups.add(securityGroup.securityGroup);
+    	}
+    	
+    	return secGroups;
+    }
+    
+    public static class SubnetEntry extends AbstractDescribableImpl<SubnetEntry> {
+    	public String subnet;
+    	
+    	@DataBoundConstructor
+    	public SubnetEntry(String subnet) {
+    		this.subnet = subnet;
+    	}
+    	
+    	@Override
+    	public String toString() {
+    		return "SubnetEntry{" + subnet + "}";
+    	}
+    	
+    	@Extension
+    	public static class DescriptorImpl extends Descriptor<SubnetEntry> {
+    		public ListBoxModel doFillSubnetItems(@RelativePath("..") @QueryParameter String credentialsId, @RelativePath("..") @QueryParameter String regionName) {
+            	ECSService ecsService = new ECSService(credentialsId, regionName);
+            	try {
+                    final AmazonEC2Client client = ecsService.getAmazonEC2Client();
+                    final ListBoxModel options = new ListBoxModel();
+                    for (Subnet subnet : client.describeSubnets().getSubnets()) {
+                        options.add(subnet.getSubnetId() + " | " + subnet.getCidrBlock() + " | " + subnet.getVpcId(), subnet.getSubnetId());
+                    }
+                    return options;
+                } catch (AmazonClientException e) {
+                    // missing credentials will throw an "AmazonClientException: Unable to load AWS credentials from any provider in the chain"
+                    LOGGER.log(Level.INFO, "Exception searching subnets for credentials=" + credentialsId + ", regionName=" + regionName + ":" + e);
+                    LOGGER.log(Level.FINE, "Exception searching subnets for credentials=" + credentialsId + ", regionName=" + regionName, e);
+                    return new ListBoxModel();
+                } catch (RuntimeException e) {
+                    LOGGER.log(Level.INFO, "Exception searching subnets for credentials=" + credentialsId + ", regionName=" + regionName, e);
+                    return new ListBoxModel();
+                }
+    		}
+    		
+    		@Override
+    		public String getDisplayName() {
+    			return "SubnetEntry";
+    		}
+    	}
+    }
+    
+    public static class SecurityGroupEntry extends AbstractDescribableImpl<SecurityGroupEntry> {
+    	public String securityGroup;
+    	
+    	@DataBoundConstructor
+    	public SecurityGroupEntry(String securityGroup) {
+    		this.securityGroup = securityGroup;
+    	}
+    	
+    	@Override
+    	public String toString() {
+    		return "SecurityGroupEntry{" + securityGroup + "}";
+    	}
+    	
+    	@Extension
+    	public static class DescriptorImpl extends Descriptor<SecurityGroupEntry> {
+    		public ListBoxModel doFillSecurityGroupItems(@RelativePath("..") @QueryParameter String credentialsId, @RelativePath("..") @QueryParameter String regionName) {
+            	ECSService ecsService = new ECSService(credentialsId, regionName);
+            	try {
+                    final AmazonEC2Client client = ecsService.getAmazonEC2Client();
+                    final ListBoxModel options = new ListBoxModel();
+                    for (SecurityGroup securityGroup : client.describeSecurityGroups().getSecurityGroups()) {
+                        options.add(securityGroup.getGroupName() + " | " + securityGroup.getGroupId(), securityGroup.getGroupId());
+                    }
+                    return options;
+                } catch (AmazonClientException e) {
+                    // missing credentials will throw an "AmazonClientException: Unable to load AWS credentials from any provider in the chain"
+                    LOGGER.log(Level.INFO, "Exception searching security groups for credentials=" + credentialsId + ", regionName=" + regionName + ":" + e);
+                    LOGGER.log(Level.FINE, "Exception searching security groups for credentials=" + credentialsId + ", regionName=" + regionName, e);
+                    return new ListBoxModel();
+                } catch (RuntimeException e) {
+                    LOGGER.log(Level.INFO, "Exception searching security groups for credentials=" + credentialsId + ", regionName=" + regionName, e);
+                    return new ListBoxModel();
+                }
+    		}
+    		
+    		@Override
+    		public String getDisplayName() {
+    			return "SecurityGroupEntry";
+    		}
+    	}
+    }
+    
+    
 }

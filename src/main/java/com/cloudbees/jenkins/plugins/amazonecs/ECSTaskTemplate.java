@@ -27,6 +27,7 @@ package com.cloudbees.jenkins.plugins.amazonecs;
 
 import com.amazonaws.services.ecs.model.ContainerDefinition;
 import com.amazonaws.services.ecs.model.HostEntry;
+import com.amazonaws.services.ecs.model.PortMapping;
 import com.amazonaws.services.ecs.model.Volume;
 import com.amazonaws.services.ecs.model.HostVolumeProperties;
 import com.amazonaws.services.ecs.model.MountPoint;
@@ -38,6 +39,7 @@ import hudson.model.Descriptor;
 import hudson.model.Label;
 import hudson.model.labels.LabelAtom;
 import hudson.util.FormValidation;
+import hudson.util.ListBoxModel;
 
 import org.apache.commons.lang.StringUtils;
 import org.kohsuke.stapler.DataBoundConstructor;
@@ -58,6 +60,11 @@ import java.util.*;
 public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
 
     /**
+     * Launch Type
+     */
+	private final String compatibility;
+	
+	/**
      * Template Name
      */
     @Nonnull
@@ -119,6 +126,16 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
      * @see ContainerDefinition#withCpu(Integer)
      */
     private final int cpu;
+    
+    /**
+     * Fargate CPU
+     */
+    private final String fargateCpu;
+    
+    /**
+     * Fargate Memory
+     */
+    private final String fargateMemory;
 
     /**
      * Space delimited list of Docker dns search domains
@@ -143,9 +160,16 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
      */
     @CheckForNull
     private String taskrole;
+    
     /**
-      JVM arguments to start slave.jar
+     * TODO:  PUT USEFUL INFO HERE
      */
+    @CheckForNull
+    private String executionRole;
+    
+    /**
+    JVM arguments to start slave.jar
+   */
     @CheckForNull
     private String jvmArgs;
 
@@ -161,6 +185,7 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
 
     private List<EnvironmentEntry> environments;
     private List<ExtraHostEntry> extraHosts;
+    private List<PortMappingEntry> portMappings;
 
     /**
     * The log configuration specification for the container.
@@ -183,19 +208,24 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
     private List<LogDriverOption> logDriverOptions;
 
     @DataBoundConstructor
-    public ECSTaskTemplate(@Nonnull String templateName,
+    public ECSTaskTemplate(String compatibility,
+    					   @Nonnull String templateName,
                            @Nullable String label,
                            @Nonnull String image,
                            @Nullable String remoteFSRoot,
                            int memory,
                            int memoryReservation,
                            int cpu,
+                           String fargateCpu,
+                           String fargateMemory,
                            boolean privileged,
                            @Nullable List<LogDriverOption> logDriverOptions,
                            @Nullable List<EnvironmentEntry> environments,
                            @Nullable List<ExtraHostEntry> extraHosts,
-                           @Nullable List<MountPointEntry> mountPoints) {
-        // If the template name is empty we will add a default name and a
+                           @Nullable List<MountPointEntry> mountPoints,
+                           @Nullable List<PortMappingEntry> portMappings) {
+        this.compatibility = compatibility;
+    	// If the template name is empty we will add a default name and a
         // random element that will help to find it later when we want to delete it.
         this.templateName = templateName.isEmpty() ?
                 "jenkinsTask-" + UUID.randomUUID().toString() : templateName;
@@ -205,16 +235,24 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
         this.memory = memory;
         this.memoryReservation = memoryReservation;
         this.cpu = cpu;
+        this.fargateCpu = fargateCpu;
+        this.fargateMemory = fargateMemory;
         this.privileged = privileged;
         this.logDriverOptions = logDriverOptions;
         this.environments = environments;
         this.extraHosts = extraHosts;
         this.mountPoints = mountPoints;
+        this.portMappings = portMappings;
     }
 
     @DataBoundSetter
     public void setTaskrole(String taskRoleArn) {
         this.taskrole = StringUtils.trimToNull(taskRoleArn);
+    }
+    
+    @DataBoundSetter
+    public void setExecutionRole(String executionRoleArn) {
+    	this.executionRole = StringUtils.trimToNull(executionRoleArn);
     }
 
     @DataBoundSetter
@@ -235,6 +273,10 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
     @DataBoundSetter
     public void setDnsSearchDomains(String dnsSearchDomains) {
         this.dnsSearchDomains = StringUtils.trimToNull(dnsSearchDomains);
+    }
+    
+    public String getCompatibility() {
+    	return compatibility;
     }
 
     public String getLabel() {
@@ -260,6 +302,14 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
     public int getCpu() {
         return cpu;
     }
+    
+    public String getFargateCpu() {
+    	return fargateCpu;
+    }
+    
+    public String getFargateMemory() {
+    	return fargateMemory;
+    }
 
     public String getDnsSearchDomains() {
         return dnsSearchDomains;
@@ -271,6 +321,10 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
 
     public String getTaskrole() {
         return taskrole;
+    }
+    
+    public String getExecutionRole() {
+    	return executionRole;
     }
 
     public String getJvmArgs() {
@@ -336,6 +390,10 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
 
     public List<ExtraHostEntry> getExtraHosts() {
         return extraHosts;
+    }
+
+    public List<PortMappingEntry> getPortMappings() {
+        return portMappings;
     }
 
     Collection<KeyValuePair> getEnvironmentKeyValuePairs() {
@@ -407,6 +465,22 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
                                        .withReadOnly(ro));
         }
         return mounts;
+    }
+
+    Collection<PortMapping> getPortMappingEntries() {
+        if (null == portMappings || portMappings.isEmpty())
+            return null;
+        Collection<PortMapping> ports = new ArrayList<PortMapping>();
+        for (PortMappingEntry portMapping : this.portMappings) {
+            Integer container = portMapping.containerPort;
+            Integer host = portMapping.hostPort;
+            String protocol = portMapping.protocol;
+
+            ports.add(new PortMapping().withContainerPort(container)
+                                       .withHostPort(host)
+                                       .withProtocol(protocol));
+        }
+        return ports;
     }
 
     public static class EnvironmentEntry extends AbstractDescribableImpl<EnvironmentEntry> {
@@ -487,6 +561,41 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
         }
     }
 
+    public static class PortMappingEntry extends AbstractDescribableImpl<PortMappingEntry> {
+        public Integer containerPort, hostPort;
+        public String protocol;
+
+        @DataBoundConstructor
+        public PortMappingEntry(Integer containerPort, Integer hostPort, String protocol) {
+            this.containerPort = containerPort;
+            this.hostPort = hostPort;
+            this.protocol = protocol;
+        }
+
+        @Override
+        public String toString() {
+            return "PortMappingEntry{" +
+                    "containerPort=" + containerPort +
+                    ", hostPort=" + hostPort +
+                    ", protocol='" + protocol + "}";
+        }
+
+        @Extension
+        public static class DescriptorImpl extends Descriptor<PortMappingEntry> {
+            public ListBoxModel doFillProtocolItems() {
+                final ListBoxModel options = new ListBoxModel();
+                options.add("TCP", "tcp");
+                options.add("UDP", "udp");
+                return options;
+            }
+            
+            @Override
+            public String getDisplayName() {
+                return "PortMappingEntry";
+            }
+        }
+    }
+    
     public Set<LabelAtom> getLabelSet() {
         return Label.parse(label);
     }
@@ -499,6 +608,66 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
     public static class DescriptorImpl extends Descriptor<ECSTaskTemplate> {
 
         private static String TEMPLATE_NAME_PATTERN = "[a-z|A-Z|0-9|_|-]{1,127}";
+        
+        public ListBoxModel doFillCompatibilityItems() {
+        	final ListBoxModel options = new ListBoxModel();
+        	options.add("EC2", "EC2");
+        	options.add("Fargate", "FARGATE");
+        	return options;
+        }
+        
+        public ListBoxModel doFillFargateCpuItems() {
+        	final ListBoxModel options = new ListBoxModel();
+        	options.add("0.25 vCPU", "256");
+        	options.add("0.5 vCPU", "512");
+        	options.add("1 vCPU", "1024");
+        	options.add("2 vCPU", "2048");
+        	options.add("4 vCPU", "4096");
+        	return options;
+        }
+        
+        String getMemoryFormat(int mem) {
+        	if (mem >= 1024) {
+        		return Integer.toString(mem / 1024) + "GB";
+        	}
+        	else {
+        		return Integer.toString(mem) + "MB";
+        	}
+        }
+        
+		public ListBoxModel doFillFargateMemoryItems(@QueryParameter String fargateCpu) {
+			final ListBoxModel options = new ListBoxModel();
+			if (!fargateCpu.isEmpty() || fargateCpu == "") {
+				switch (Integer.parseInt(fargateCpu)) {
+				case 256:
+					options.add("512MB", "512");
+					options.add("1GB", "1024");
+					options.add("2GB", "2048");
+					break;
+				case 512:
+					for (int i = 1024; i <= 3072; i = i + 1024) {
+						options.add(getMemoryFormat(i), Integer.toString(i));
+					}
+					break;
+				case 1024:
+					for (int i = 2048; i <= 8192; i = i + 1024) {
+						options.add(getMemoryFormat(i), Integer.toString(i));
+					}
+					break;
+				case 2048:
+					for (int i = 4096; i <= 16384; i = i + 1024) {
+						options.add(getMemoryFormat(i), Integer.toString(i));
+					}
+					break;
+				case 4096:
+					for (int i = 8192; i <= 30720; i = i + 1024) {
+						options.add(getMemoryFormat(i), Integer.toString(i));
+					}
+					break;
+				}
+			}
+			return options;
+		}
 
         @Override
         public String getDisplayName() {
@@ -513,26 +682,29 @@ public class ECSTaskTemplate extends AbstractDescribableImpl<ECSTaskTemplate> {
         }
 
         /* we validate both memory and memoryReservation fields to the same rules */
-        public FormValidation doCheckMemory(@QueryParameter("memory") int memory, @QueryParameter("memoryReservation") int memoryReservation) throws IOException, ServletException {
-            return validateMemorySettings(memory,memoryReservation);
+        public FormValidation doCheckMemory(@QueryParameter("memory") int memory, @QueryParameter("memoryReservation") int memoryReservation, @QueryParameter("compatibility") String compatibility) throws IOException, ServletException {
+            return validateMemorySettings(memory,memoryReservation,compatibility);
         }
 
-        public FormValidation doCheckMemoryReservation(@QueryParameter("memory") int memory, @QueryParameter("memoryReservation") int memoryReservation) throws IOException, ServletException {
-            return validateMemorySettings(memory,memoryReservation);
+        public FormValidation doCheckMemoryReservation(@QueryParameter("memory") int memory, @QueryParameter("memoryReservation") int memoryReservation, @QueryParameter("compatibility") String compatibility) throws IOException, ServletException {
+            return validateMemorySettings(memory,memoryReservation,compatibility);
         }
 
-        private FormValidation validateMemorySettings(int memory, int memoryReservation) {
-            if (memory < 0 || memoryReservation < 0) {
-                return FormValidation.error("memory and/or memoryReservation must be 0 or a positive integer");
-            }
-            if (memory == 0 && memoryReservation == 0) {
-                return FormValidation.error("at least one of memory or memoryReservation are required to be > 0");
-            }
-            if (memory > 0 && memoryReservation > 0) {
-                if (memory <= memoryReservation) {
-                    return FormValidation.error("memory must be greater than memoryReservation if both are specified");
-                }
-            }
+        private FormValidation validateMemorySettings(int memory, int memoryReservation, String compatibility) {
+            
+        	if(compatibility.equalsIgnoreCase("EC2")) {
+        		if (memory < 0 || memoryReservation < 0) {
+                	return FormValidation.error("memory and/or memoryReservation must be 0 or a positive integer");
+        		}
+        		if (memory == 0 && memoryReservation == 0) {
+                	return FormValidation.error("at least one of memory or memoryReservation are required to be > 0");
+            	}
+            	if (memory > 0 && memoryReservation > 0) {
+            		if (memory <= memoryReservation) {
+                    	return FormValidation.error("memory must be greater than memoryReservation if both are specified");
+                	}
+            	}
+        	}
             return FormValidation.ok();
         }
     }
